@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Pytest cache
+.pytest_cache/
+
+# Prefect local files
+.prefect/
+
+# Source database
+shopdata.db
+
+# Generated database
+analytics.db
+
+# OS files
+.DS_Store
+Thumbs.db
