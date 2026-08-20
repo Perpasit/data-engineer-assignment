@@ -7,6 +7,7 @@ from prefect.logging import get_run_logger
 
 
 SOURCE_DB = "shopdata.db"
+TARGET_DB = "analytics.db"
 
 
 @task
@@ -311,6 +312,70 @@ def transform_orders(
         raise
 
 
+@task
+def load_customers(
+    customers_df: pd.DataFrame
+) -> None:
+
+    logger = get_run_logger()
+
+    try:
+        connection = sqlite3.connect(TARGET_DB)
+
+        customers_df.to_sql(
+            "dim_customers",
+            connection,
+            if_exists="replace",
+            index=False
+        )
+
+        logger.info(
+            f"Loaded {len(customers_df)} records into dim_customers"
+        )
+
+    except Exception as error:
+        logger.error(
+            f"Failed to load dim_customers: {error}"
+        )
+        raise
+
+    finally:
+        if "connection" in locals():
+            connection.close()
+
+
+@task
+def load_orders(
+    orders_df: pd.DataFrame
+) -> None:
+
+    logger = get_run_logger()
+
+    try:
+        connection = sqlite3.connect(TARGET_DB)
+
+        orders_df.to_sql(
+            "fct_orders",
+            connection,
+            if_exists="replace",
+            index=False
+        )
+
+        logger.info(
+            f"Loaded {len(orders_df)} records into fct_orders"
+        )
+
+    except Exception as error:
+        logger.error(
+            f"Failed to load fct_orders: {error}"
+        )
+        raise
+
+    finally:
+        if "connection" in locals():
+            connection.close()
+
+
 @flow(name="shopdata-etl-pipeline")
 def etl_pipeline():
     customers_df = extract_customers()
@@ -325,6 +390,9 @@ def etl_pipeline():
         orders_df,
         exchange_rates_df
     )
+
+    load_customers(clean_customers_df)
+    load_orders(clean_orders_df)
 
     print("\nClean Customers:")
     print(clean_customers_df)
