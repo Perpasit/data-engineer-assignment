@@ -171,6 +171,68 @@ def fill_missing_emails(customers_df: pd.DataFrame) -> pd.DataFrame:
     return cleaned_df
 
 
+def filter_invalid_orders(
+    orders_df: pd.DataFrame
+) -> pd.DataFrame:
+
+    cleaned_df = orders_df.copy()
+
+    cleaned_df = cleaned_df[
+        cleaned_df["total_amount"] > 0
+    ].reset_index(drop=True)
+
+    return cleaned_df
+
+
+def convert_orders_to_usd(
+    orders_df: pd.DataFrame,
+    exchange_rates_df: pd.DataFrame
+) -> pd.DataFrame:
+
+    cleaned_orders = orders_df.copy()
+    rates_df = exchange_rates_df.copy()
+
+    cleaned_orders["order_date"] = pd.to_datetime(
+        cleaned_orders["order_date"]
+    )
+
+    rates_df["date"] = pd.to_datetime(
+        rates_df["date"]
+    )
+
+    merged_df = cleaned_orders.merge(
+        rates_df,
+        how="left",
+        left_on=["currency", "order_date"],
+        right_on=["currency", "date"]
+    )
+
+    merged_df["usd_amount"] = (
+        merged_df["total_amount"]
+        * merged_df["rate_to_usd"]
+    )
+
+    missing_rate_mask = (
+        merged_df["currency"].isna()
+        | merged_df["currency"].astype(str).str.strip().eq("")
+        | merged_df["rate_to_usd"].isna()
+    )
+
+    merged_df.loc[
+        missing_rate_mask,
+        "usd_amount"
+    ] = merged_df.loc[
+        missing_rate_mask,
+        "total_amount"
+    ]
+
+    merged_df = merged_df.drop(
+        columns=["rate_to_usd", "date"]
+    )
+
+    return merged_df
+
+
 @task
 def transform_customers(
     customers_df: pd.DataFrame
@@ -209,13 +271,60 @@ def transform_customers(
         raise
 
 
+@task
+def transform_orders(
+    orders_df: pd.DataFrame,
+    exchange_rates_df: pd.DataFrame
+) -> pd.DataFrame:
+
+    logger = get_run_logger()
+
+    try:
+        before_count = len(orders_df)
+
+        cleaned_df = filter_invalid_orders(
+            orders_df
+        )
+
+        after_filter_count = len(cleaned_df)
+
+        logger.info(
+            f"Invalid orders removed: "
+            f"{before_count} -> {after_filter_count} records"
+        )
+
+        cleaned_df = convert_orders_to_usd(
+            cleaned_df,
+            exchange_rates_df
+        )
+
+        logger.info(
+            "Order currency conversion to USD completed"
+        )
+
+        return cleaned_df
+
+    except Exception as error:
+        logger.error(
+            f"Failed to transform order data: {error}"
+        )
+        raise
+
+
 @flow(name="shopdata-etl-pipeline")
 def etl_pipeline():
     customers_df = extract_customers()
-    # orders_df = extract_orders()
-    # exchange_rates_df = extract_exchange_rates()
+    orders_df = extract_orders()
+    exchange_rates_df = extract_exchange_rates()
 
-    clean_customers_df = transform_customers(customers_df)
+    clean_customers_df = transform_customers(
+        customers_df
+    )
+
+    clean_orders_df = transform_orders(
+        orders_df,
+        exchange_rates_df
+    )
 
     print("\nClean Customers:")
     print(clean_customers_df)
@@ -231,6 +340,22 @@ def etl_pipeline():
     print(
         "Missing emails: "
         f"{clean_customers_df['email'].isna().sum()}"
+    )
+
+    print("\nClean Orders:")
+    print(clean_orders_df)
+
+    print(f"\nRaw order rows: {len(orders_df)}")
+    print(f"Clean order rows: {len(clean_orders_df)}")
+
+    print(
+        "Invalid order amounts: "
+        f"{(clean_orders_df['total_amount'] <= 0).sum()}"
+    )
+
+    print(
+        "Missing USD amounts: "
+        f"{clean_orders_df['usd_amount'].isna().sum()}"
     )
 
 
